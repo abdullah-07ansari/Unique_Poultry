@@ -19,6 +19,7 @@ import DailyFlockRecord from './models/DailyFlockRecord';
 import shedRoutes from './routes/shedRoutes';
 import dailyRecordRoutes from './routes/dailyRecordRoutes';
 import { recalculateAliveBirds } from './services/batchService';
+import { calculateFlockPerformance } from './services/performanceService';
 
 const app = express();
 app.use(cors());
@@ -393,6 +394,21 @@ app.post('/api/batches', async (req: Request, res: Response) => {
     res.status(201).json(newBatch);
   } catch (error: any) {
     res.status(400).json({ error: error.message || 'Invalid batch data' });
+  }
+});
+
+app.get('/api/batches/:batchId/performance', async (req: Request, res: Response) => {
+  try {
+    const batchId = Array.isArray(req.params.batchId) ? req.params.batchId[0] : req.params.batchId;
+    const performance = await calculateFlockPerformance(batchId);
+    res.json({ success: true, performance });
+  } catch (error: any) {
+    if (error?.statusCode === 404 || /batch not found/i.test(error?.message || '')) {
+      res.status(404).json({ success: false, error: 'Batch not found' });
+      return;
+    }
+    console.error('Failed to calculate flock performance', error);
+    res.status(500).json({ success: false, error: 'Server error calculating performance' });
   }
 });
 

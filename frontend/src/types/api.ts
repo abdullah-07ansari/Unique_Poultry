@@ -46,6 +46,39 @@ export interface Batch {
   updatedAt: string;
 }
 
+export type BatchPerformanceStatus = 'ON_TRACK' | 'WATCH' | 'CRITICAL' | 'INSUFFICIENT_DATA';
+
+export interface BatchPerformance {
+  batchId: string;
+  batchName: string;
+  ageDays: number;
+  birdsPlaced: number;
+  birdsAlive: number;
+  totalMortality: number;
+  totalCulls: number;
+  totalLosses: number;
+  lossRatePct: number | null;
+  cumulativeFeedKg: number | null;
+  feedPerPlacedBirdKg: number | null;
+  latestAverageWeightKg: number | null;
+  latestRecordDate: string | null;
+  latestRecordFlockDay: number | null;
+  liveBiomassKg: number | null;
+  startingBiomassKg: null;
+  weightGainKg: null;
+  recentAdgKgPerDay: number | null;
+  operationalFcr: number | null;
+  targetFcr: number | null;
+  fcrGap: number | null;
+  targetSaleWeightKg: number | null;
+  weightGapKg: number | null;
+  targetSaleAgeDays: number | null;
+  estimatedDaysToTarget: number | null;
+  projectedTargetAgeDays: number | null;
+  saleAgeDeviationDays: number | null;
+  performanceStatus: BatchPerformanceStatus;
+}
+
 /**
  * Raw daily observation record for a flock.
  * All counts (mortality, culls) are DAILY — never cumulative.

@@ -3,7 +3,7 @@
 // Thin fetch wrappers. No business logic. No fake data.
 // ============================================================
 
-import type { Batch, Farm, Shed, DailyFlockRecord, ApiError as ApiErrorType } from '../types/api';
+import type { Batch, Farm, Shed, DailyFlockRecord, BatchPerformance, ApiError as ApiErrorType } from '../types/api';
 import { ApiError } from '../types/api';
 
 const BASE = 'http://localhost:5000/api';
@@ -47,6 +47,11 @@ export async function fetchSheds(farmId?: string): Promise<Shed[]> {
 export async function fetchDailyRecords(batchId: string): Promise<DailyFlockRecord[]> {
   const res = await fetch(`${BASE}/batches/${batchId}/daily-records`);
   return handleResponse<DailyFlockRecord[]>(res);
+}
+
+export async function fetchBatchPerformance(batchId: string): Promise<BatchPerformance> {
+  const res = await fetch(`${BASE}/batches/${batchId}/performance`);
+  return handleResponse<{ success: boolean; performance: BatchPerformance }>(res).then(r => r.performance);
 }
 
 export async function createDailyRecord(

@@ -5,11 +5,11 @@ import {
   Droplets, Thermometer, Wind, Scale, FlaskConical
 } from 'lucide-react';
 
-import type { Batch, Farm, Shed, DailyFlockRecord, DailyRecordFormData, NewBatchFormData } from '../types/api';
+import type { Batch, Farm, Shed, DailyFlockRecord, BatchPerformance, DailyRecordFormData, NewBatchFormData } from '../types/api';
 import {
   fetchBatches, fetchFarms, fetchSheds, fetchDailyRecords,
   createDailyRecord, updateDailyRecord, deleteDailyRecord,
-  createBatch, friendlyError, refetchBatch
+  createBatch, friendlyError, refetchBatch, fetchBatchPerformance
 } from '../api/flockApi';
 
 // =====================================================================
@@ -446,6 +446,7 @@ function FlockDetail({
   const [editRecord, setEditRecord] = useState<DailyFlockRecord | null>(null);
   const [pendingDelete, setPendingDelete] = useState<DailyFlockRecord | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [performance, setPerformance] = useState<BatchPerformance | null>(null);
 
   const farm = farms.find(f => f._id === batch.farmId);
   const shed = sheds.find(s => s._id === batch.shedId);
@@ -464,15 +465,29 @@ function FlockDetail({
     }
   }, [batch._id]);
 
+  const loadPerformance = useCallback(async () => {
+    try {
+      const data = await fetchBatchPerformance(batch._id);
+      setPerformance(data);
+    } catch {
+      setPerformance(null);
+    }
+  }, [batch._id]);
+
   const refreshBatch = useCallback(async () => {
     // Always re-fetch from backend — never calculate aliveBirds in React
     const fresh = await refetchBatch(batch._id);
     if (fresh) setBatch(fresh);
   }, [batch._id]);
 
+  const refreshPerformance = useCallback(async () => {
+    await loadPerformance();
+  }, [loadPerformance]);
+
   useEffect(() => {
     loadRecords();
-  }, [loadRecords]);
+    loadPerformance();
+  }, [loadRecords, loadPerformance]);
 
   // Display-only summary computed from records (not authoritative aliveBirds)
   const totalMortality = records.reduce((s, r) => s + r.mortality, 0);
@@ -489,7 +504,7 @@ function FlockDetail({
   async function handleSaved() {
     setShowForm(false);
     setEditRecord(null);
-    await Promise.all([refreshBatch(), loadRecords()]);
+    await Promise.all([refreshBatch(), loadRecords(), refreshPerformance()]);
   }
 
   async function handleDelete(record: DailyFlockRecord) {
@@ -498,7 +513,7 @@ function FlockDetail({
     try {
       await deleteDailyRecord(batch._id, record._id);
       onToast('success', `Day ${record.flockDay} record deleted.`);
-      await Promise.all([refreshBatch(), loadRecords()]);
+      await Promise.all([refreshBatch(), loadRecords(), refreshPerformance()]);
     } catch (err) {
       onToast('error', friendlyError(err));
     } finally {
@@ -611,7 +626,14 @@ function FlockDetail({
         </div>
         <div>
           <span className="text-muted" style={{ fontSize: '0.78rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Actual FCR</span>
-          <span className="text-muted" style={{ marginLeft: '0.5rem', fontStyle: 'italic', fontSize: '0.85rem' }}>Not yet calculated</span>
+          {performance && performance.operationalFcr !== null ? (
+            <span style={{ fontWeight: 700, marginLeft: '0.5rem' }}>{performance.operationalFcr.toFixed(2)}</span>
+          ) : (
+            <span className="text-muted" style={{ marginLeft: '0.5rem', fontStyle: 'italic', fontSize: '0.85rem' }}>Not yet calculable</span>
+          )}
+          {performance && performance.operationalFcr === null && (
+            <span className="text-muted" style={{ fontSize: '0.75rem', marginLeft: '0.35rem' }}>Starting flock biomass is not recorded.</span>
+          )}
         </div>
         {latestRecord && (
           <div>
@@ -622,6 +644,65 @@ function FlockDetail({
           </div>
         )}
       </div>
+
+      {performance && (
+        <div className="card" style={{ padding: '1rem 1.25rem', marginBottom: '1.25rem' }}>
+          <div className="section-header" style={{ marginBottom: '0.75rem' }}>
+            <span className="section-title">Performance</span>
+            <span className="badge badge-info" style={{ textTransform: 'uppercase' }}>{performance.performanceStatus.replace('_', ' ')}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Current Age</div>
+              <div style={{ fontWeight: 700 }}>{performance.ageDays} days</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Birds Alive</div>
+              <div style={{ fontWeight: 700 }}>{performance.birdsAlive.toLocaleString()}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Loss Rate</div>
+              <div style={{ fontWeight: 700 }}>{performance.lossRatePct !== null ? `${performance.lossRatePct.toFixed(2)}%` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Latest Avg Wt</div>
+              <div style={{ fontWeight: 700 }}>{performance.latestAverageWeightKg !== null ? `${performance.latestAverageWeightKg.toFixed(2)} kg` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Live Biomass</div>
+              <div style={{ fontWeight: 700 }}>{performance.liveBiomassKg !== null ? `${performance.liveBiomassKg.toFixed(2)} kg` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Cumulative Feed</div>
+              <div style={{ fontWeight: 700 }}>{performance.cumulativeFeedKg !== null ? `${performance.cumulativeFeedKg.toFixed(2)} kg` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Feed / Bird</div>
+              <div style={{ fontWeight: 700 }}>{performance.feedPerPlacedBirdKg !== null ? `${performance.feedPerPlacedBirdKg.toFixed(2)} kg` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Recent ADG</div>
+              <div style={{ fontWeight: 700 }}>{performance.recentAdgKgPerDay !== null ? `${performance.recentAdgKgPerDay.toFixed(3)} kg/day` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Target FCR</div>
+              <div style={{ fontWeight: 700 }}>{performance.targetFcr !== null ? performance.targetFcr.toFixed(2) : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Target Weight</div>
+              <div style={{ fontWeight: 700 }}>{performance.targetSaleWeightKg !== null ? `${performance.targetSaleWeightKg.toFixed(2)} kg` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Projected Target Age</div>
+              <div style={{ fontWeight: 700 }}>{performance.projectedTargetAgeDays !== null ? `${performance.projectedTargetAgeDays.toFixed(1)} days` : '—'}</div>
+            </div>
+            <div>
+              <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Status</div>
+              <div style={{ fontWeight: 700 }}>{performance.performanceStatus.replace('_', ' ')}</div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Daily Record Form */}
       <div id="record-form-anchor" />
