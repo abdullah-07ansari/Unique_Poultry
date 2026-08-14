@@ -9,7 +9,7 @@ export interface Farm {
   manager: string;
   shedCount: number;
   totalCapacity: number;
-  status: 'active' | 'maintenance';
+  status: 'active' | 'inactive' | 'maintenance';
   weatherZone: string;
   createdAt: string;
   updatedAt: string;

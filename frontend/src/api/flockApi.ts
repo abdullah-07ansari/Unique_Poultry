@@ -26,14 +26,6 @@ export async function fetchBatches(): Promise<Batch[]> {
   return handleResponse<Batch[]>(res);
 }
 
-export async function fetchBatch(batchId: string): Promise<Batch> {
-  const res = await fetch(`${BASE}/batches/${batchId}`);
-  // The list endpoint returns all; no single-batch endpoint yet.
-  // Workaround: fetch all and find the one we need.
-  // If the fetch fails just propagate the error.
-  if (!res.ok) throw new ApiError(`Batch ${batchId} not found`, res.status);
-  return res.json();
-}
 
 /** Fetch a fresh copy of a single batch by re-fetching the list. */
 export async function refetchBatch(batchId: string): Promise<Batch | null> {
