@@ -56,7 +56,7 @@ function App() {
 
   const renderScreen = () => {
     switch (activeTab) {
-      case 'home':       return <HomeScreen activeFarm={activeFarm} />;
+      case 'home':       return <HomeScreen activeFarm={activeFarm} onNavigate={navigate} />;
       case 'alerts':     return <AlertsScreen />;
       case 'batch':      return <BatchScreen />;
       case 'expense':    return <ExpenseScreen />;

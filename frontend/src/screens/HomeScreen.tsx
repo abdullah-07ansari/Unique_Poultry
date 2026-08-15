@@ -1,276 +1,496 @@
-import { useEffect, useState } from 'react';
-import { Activity, Droplet, Thermometer, Package, TrendingUp, MessageCircle, Bot, CloudSun, AlertTriangle, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  CheckCircle2,
+  HeartPulse,
+  ShieldAlert,
+  TrendingUp,
+  Weight
+} from 'lucide-react';
+import type { TabId } from '../App';
+import { fetchBatches, fetchBatchPerformance, fetchDailyRecords, friendlyError } from '../api/flockApi';
+import { fetchBatchHealthSummary } from '../api/healthApi';
+import type { Batch, BatchHealthSummary, BatchPerformance, DailyFlockRecord } from '../types/api';
 
-interface DashboardStats {
-  totalBirds: number;
-  totalCost: number;
-  avgWeight: number;
-  costPerBird: number;
-  unacknowledgedAlerts: number;
-  activeBatches: number;
+function formatNumber(value: number | null | undefined, digits = 0): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  return value.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits });
 }
 
-interface WeatherData {
-  location: string;
-  provider: string;
-  current: {
-    temp: number;
-    realFeel: number;
-    humidity: number;
-    condition: string;
-    uvIndex: string;
-    windKmh: number;
-  };
-  forecast: { day: string; high: number; low: number; recommendation: string }[];
+function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/A';
+  return `${value.toFixed(1)}%`;
 }
 
-export default function HomeScreen({ activeFarm }: { activeFarm: string }) {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [liveTemp, setLiveTemp] = useState(29.5);
-  const [liveHumidity, setLiveHumidity] = useState(62);
-  const [tickerIdx, setTickerIdx] = useState(0);
+function buildLinePath(points: Array<{ x: number; y: number }>): string {
+  if (!points.length) return '';
+  const maxX = Math.max(...points.map(p => p.x), 1);
+  const maxY = Math.max(...points.map(p => p.y), 1);
+  const minY = Math.min(...points.map(p => p.y), 0);
+  return points
+    .map((point, index) => {
+      const scaledX = maxX === 0 ? 0 : (point.x / maxX) * 100;
+      const scaledY = maxY === minY ? 50 : 100 - ((point.y - minY) / (maxY - minY || 1)) * 100;
+      return `${index === 0 ? 'M' : 'L'} ${scaledX} ${scaledY}`;
+    })
+    .join(' ');
+}
 
-  const TICKERS = [
-    '🔴 CRITICAL: Coccidiosis detected in Shed A — treatment initiated',
-    '⚠️ Shed B temperature at 36.1°C — auto-fan override active',
-    '📋 Batch 02 vaccination due — Newcastle Disease (Lasota) on Day 18',
-    '💧 Feed wastage 18% in Shed A feeder line 2 — AI correction suggested',
-    '🌧️ Storm forecast tonight — curtain pre-adjustment recommended',
-  ];
+function getFlockAgeDays(batch: Batch | null): number | null {
+  if (!batch?.placementDate) return null;
+  const date = new Date(batch.placementDate);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMs = Date.now() - date.getTime();
+  return Math.max(1, Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1);
+}
+
+export default function HomeScreen({
+  activeFarm,
+  onNavigate,
+}: {
+  activeFarm: string;
+  onNavigate?: (tab: TabId) => void;
+}) {
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState('');
+  const [performance, setPerformance] = useState<BatchPerformance | null>(null);
+  const [healthSummary, setHealthSummary] = useState<BatchHealthSummary | null>(null);
+  const [records, setRecords] = useState<DailyFlockRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
-    const t = setInterval(() => setTickerIdx(i => (i + 1) % TICKERS.length), 4000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      setLiveTemp(prev => Number((prev + (Math.random() * 0.4) - 0.2).toFixed(1)));
-      setLiveHumidity(prev => Math.max(40, Math.min(90, Math.round(prev + (Math.random() - 0.5) * 2))));
-    }, 2500);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    fetch('http://localhost:5000/api/dashboard')
-      .then(r => r.json()).then(setStats).catch(console.error);
-    fetch('http://localhost:5000/api/weather')
-      .then(r => r.json())
-      .then(data => {
-        // Fallback for when the backend hasn't been restarted yet
-        if (!data.current && data.temp) {
-          setWeather({
-            location: data.location || 'Nashik, MH',
-            provider: 'AccuWeather',
-            current: {
-              temp: data.temp,
-              realFeel: data.temp + 2,
-              humidity: data.humidity,
-              condition: data.condition,
-              uvIndex: 'High',
-              windKmh: data.windKmh || 14
-            },
-            forecast: data.forecast
-          });
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      setError('');
+      try {
+        const data = await fetchBatches();
+        if (cancelled) return;
+        setBatches(data);
+        if (data.length > 0) {
+          setSelectedBatchId(current => current && data.some(batch => batch._id === current) ? current : data[0]._id);
         } else {
-          setWeather(data);
+          setSelectedBatchId('');
         }
-      }).catch(console.error);
+      } catch (err) {
+        if (!cancelled) setError(friendlyError(err));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void load();
+    return () => { cancelled = true; };
   }, [activeFarm]);
 
-  if (!stats) return (
-    <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-      Connecting to MongoDB backend...
-    </div>
+  useEffect(() => {
+    if (!selectedBatchId) {
+      setPerformance(null);
+      setHealthSummary(null);
+      setRecords([]);
+      return;
+    }
+
+    let cancelled = false;
+    async function loadBatchData() {
+      try {
+        const [performanceData, summaryData, dailyRecords] = await Promise.all([
+          fetchBatchPerformance(selectedBatchId),
+          fetchBatchHealthSummary(selectedBatchId),
+          fetchDailyRecords(selectedBatchId),
+        ]);
+        if (cancelled) return;
+        setPerformance(performanceData);
+        setHealthSummary(summaryData);
+        setRecords(dailyRecords.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+      } catch (err) {
+        if (!cancelled) setError(friendlyError(err));
+      }
+    }
+
+    void loadBatchData();
+    return () => { cancelled = true; };
+  }, [selectedBatchId]);
+
+  const selectedBatch = useMemo(
+    () => batches.find(batch => batch._id === selectedBatchId) ?? batches[0] ?? null,
+    [batches, selectedBatchId]
   );
 
-  const estimatedProfit = Math.round(stats.totalBirds * 2.0 * 102 - stats.totalCost);
+  const flockAgeDays = selectedBatch ? getFlockAgeDays(selectedBatch) : null;
+
+  const decisionItems = useMemo(() => {
+    const items: Array<{ severity: 'critical' | 'warning' | 'info'; title: string; explanation: string; action: string; source: string }> = [];
+    const lossRate = performance?.lossRatePct ?? null;
+    const recentAdg = performance?.recentAdgKgPerDay ?? null;
+    const weightGap = performance?.weightGapKg ?? null;
+    const targetDelay = performance?.estimatedDaysToTarget ?? null;
+
+    if (!performance && !healthSummary && records.length === 0) {
+      return [{
+        severity: 'info',
+        title: 'Insufficient data for a reliable assessment.',
+        explanation: 'No daily flock data or health records are available for this batch yet.',
+        action: 'Record today’s flock data',
+        source: 'Batch data',
+      }];
+    }
+
+    if (performance?.performanceStatus === 'CRITICAL') {
+      items.push({
+        severity: 'critical',
+        title: 'Critical performance deviation',
+        explanation: 'The current performance indicators show a critical flock trend that needs immediate attention.',
+        action: 'Review flock performance and intervene immediately',
+        source: 'Performance engine',
+      });
+    } else if (performance?.performanceStatus === 'WATCH') {
+      items.push({
+        severity: 'warning',
+        title: 'Watch performance status',
+        explanation: 'The flock is behind plan or trending below expected performance.',
+        action: 'Review feed, weight, and mortality trends',
+        source: 'Performance engine',
+      });
+    }
+
+    if (typeof lossRate === 'number' && lossRate > 5) {
+      items.push({
+        severity: 'warning',
+        title: 'High mortality or cull loss',
+        explanation: `Loss rate is ${formatPercent(lossRate)} in the current dataset.`,
+        action: 'Check mortality/cull trend and ventilation or health checks',
+        source: 'Daily flock records',
+      });
+    }
+
+    if (typeof recentAdg === 'number' && recentAdg < 0) {
+      items.push({
+        severity: 'warning',
+        title: 'Weak recent gain',
+        explanation: `Average daily gain is ${recentAdg.toFixed(3)} kg/day, below the expected trend.`,
+        action: 'Review feed intake and flock health',
+        source: 'Weight trend',
+      });
+    }
+
+    if (typeof weightGap === 'number' && weightGap > 0) {
+      items.push({
+        severity: 'info',
+        title: 'Target weight gap remains',
+        explanation: `Current weight remains ${formatNumber(weightGap, 2)} kg below the target.`,
+        action: 'Continue monitoring weight gain and feed efficiency',
+        source: 'Weight target',
+      });
+    }
+
+    if (typeof targetDelay === 'number' && targetDelay > 7) {
+      items.push({
+        severity: 'warning',
+        title: 'Sale-age delay is likely',
+        explanation: `The current projection suggests a delay of ${formatNumber(targetDelay, 0)} days to the target sale age.`,
+        action: 'Review feed and growth performance against the target plan',
+        source: 'Projected target age',
+      });
+    }
+
+    if (healthSummary?.lowConfidenceInspections && healthSummary.lowConfidenceInspections > 0) {
+      items.push({
+        severity: 'warning',
+        title: 'Low-confidence inspection',
+        explanation: 'One or more inspection images require a clearer image before the system can interpret them reliably.',
+        action: 'Capture a clearer image and rerun the health inspection',
+        source: 'Health inspection quality',
+      });
+    }
+
+    if (healthSummary?.abnormalInspectionCount && healthSummary.abnormalInspectionCount > 0 && healthSummary.recentHealthTrend === 'worsening') {
+      items.push({
+        severity: 'warning',
+        title: 'Recurring abnormal health signal',
+        explanation: 'Recent inspection results are trending worse, so the flock should be monitored closely.',
+        action: 'Review health history and inspect additional birds',
+        source: 'Health summary',
+      });
+    }
+
+    if (healthSummary?.latestHealthStatus === 'MODEL_NOT_TRAINED') {
+      items.push({
+        severity: 'info',
+        title: 'AI model is not yet available',
+        explanation: 'No visual diagnosis is being generated because the model is not trained or connected yet.',
+        action: 'Continue routine flock monitoring and capture clearer images when the model is ready',
+        source: 'Health model status',
+      });
+    }
+
+    if (!items.length) {
+      items.push({
+        severity: 'info',
+        title: 'Flock currently appears on track.',
+        explanation: 'The available performance and health indicators do not show an immediate issue.',
+        action: 'Continue routine monitoring',
+        source: 'Batch overview',
+      });
+    }
+
+    return items.slice(0, 3);
+  }, [performance, healthSummary, records]);
+
+  const todayStatus = useMemo(() => {
+    if (!performance && !healthSummary && records.length === 0) return 'INSUFFICIENT DATA';
+    if (performance?.performanceStatus === 'CRITICAL') return 'CRITICAL';
+    if (performance?.performanceStatus === 'WATCH') return 'WATCH';
+    if (healthSummary?.latestHealthStatus === 'LOW_CONFIDENCE') return 'WATCH';
+    if (healthSummary?.latestHealthStatus === 'MODEL_NOT_TRAINED') return 'ON TRACK';
+    if (performance?.performanceStatus === 'ON_TRACK') return 'ON TRACK';
+    return 'INSUFFICIENT DATA';
+  }, [performance, healthSummary, records]);
+
+  const weightTrend = useMemo(() => {
+    if (!records.length) return [] as Array<{ label: string; value: number }>;
+    return records.slice(-7).map(record => ({
+      label: new Date(record.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+      value: Number(record.averageWeightKg),
+    }));
+  }, [records]);
+
+  const mortalityTrend = useMemo(() => {
+    if (!records.length) return [] as Array<{ label: string; value: number }>;
+    return records.slice(-7).map(record => ({
+      label: new Date(record.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
+      value: Number(record.mortality + record.culls),
+    }));
+  }, [records]);
+
+  const weightChartPath = useMemo(() => {
+    if (!weightTrend.length) return '';
+    return buildLinePath(weightTrend.map((item, index) => ({ x: index, y: item.value })));
+  }, [weightTrend]);
+
+  const mortalityChartPath = useMemo(() => {
+    if (!mortalityTrend.length) return '';
+    return buildLinePath(mortalityTrend.map((item, index) => ({ x: index, y: item.value })));
+  }, [mortalityTrend]);
+
+  if (loading && !selectedBatch) {
+    return <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading flock dashboard…</div>;
+  }
 
   return (
-    <div className="animate-fade-in">
-      {/* Alert Ticker */}
-      {stats.unacknowledgedAlerts > 0 && (
-        <div className="alert-ticker" style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <AlertTriangle size={14} style={{ flexShrink: 0 }} />
-          <span style={{ fontWeight: 600, whiteSpace: 'nowrap', fontSize: '0.75rem' }}>
-            {stats.unacknowledgedAlerts} ACTIVE ALERTS:
-          </span>
-          <div style={{ flex: 1, overflow: 'hidden' }}>
-            <span className="alert-ticker-inner">{TICKERS[tickerIdx]}</span>
-          </div>
+    <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h2 className="screen-title" style={{ marginBottom: '0.2rem' }}>Flock Decision Dashboard</h2>
+          <p className="text-muted" style={{ margin: 0 }}>{activeFarm}</p>
         </div>
+        {selectedBatch && (
+          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <button className="btn btn-outline" onClick={() => onNavigate?.('batch')}>View flock records</button>
+            <button className="btn btn-primary" onClick={() => onNavigate?.('health')}>New health inspection</button>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="danger-card" style={{ padding: '0.8rem 1rem' }}>{error}</div>
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.75rem', flexWrap: 'wrap', gap: '0.75rem' }}>
-        <div>
-          <h2 className="screen-title" style={{ marginBottom: '0.25rem' }}>Precision Farm Overview</h2>
-          <p className="text-muted" style={{ fontSize: '0.875rem' }}>📍 {activeFarm}</p>
+      {!selectedBatch ? (
+        <div className="card" style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+          No batches are available for this farm.
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          {stats.unacknowledgedAlerts > 0 && (
-            <div className="badge badge-critical"><AlertTriangle size={10} /> {stats.unacknowledgedAlerts} unresolved alerts</div>
-          )}
-          <div className="badge badge-success">
-            <span className="live-dot" style={{ width: 6, height: 6 }} /> Live Monitoring
-          </div>
-        </div>
-      </div>
-
-      {/* KPI Grid: 6 cards */}
-      <div className="grid-3" style={{ marginBottom: '1.5rem' }}>
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title"><Package size={14} /> Total Birds</div>
-          <div className="card-value text-success">{stats.totalBirds.toLocaleString()}</div>
-          <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '0.2rem' }}>{stats.activeBatches} active batches</div>
-          <div className="progress-track">
-            <div className="progress-fill progress-fill-success" style={{ width: '97%' }} />
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title"><TrendingUp size={14} /> Avg. Weight</div>
-          <div className="card-value text-primary">{stats.avgWeight.toFixed(2)} <span style={{ fontSize: '1rem', fontWeight: 400 }}>kg</span></div>
-          <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '0.2rem' }}>Target: 2.2 kg</div>
-          <div className="progress-track">
-            <div className="progress-fill progress-fill-primary" style={{ width: `${(stats.avgWeight / 2.2) * 100}%` }} />
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title text-warning"><Thermometer size={14} /> Live Temperature</div>
-          <div className={`card-value ${liveTemp > 35 ? 'text-danger' : liveTemp > 32 ? 'text-warning' : 'text-success'}`}>{liveTemp.toFixed(1)}°C</div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', marginTop: '0.2rem', fontSize: '0.72rem' }}>
-            <span className="live-dot" />
-            <span className="text-muted">IoT sensor • 25ms latency</span>
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title"><Droplet size={14} /> Total Expenses</div>
-          <div className="card-value text-danger">₹{stats.totalCost.toLocaleString()}</div>
-          <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '0.2rem' }}>₹{stats.costPerBird}/bird avg</div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title"><Activity size={14} /> Live Humidity</div>
-          <div className={`card-value ${liveHumidity > 80 ? 'text-danger' : liveHumidity < 50 ? 'text-warning' : 'text-primary'}`}>{liveHumidity}%</div>
-          <div className="progress-track">
-            <div className={`progress-fill ${liveHumidity > 80 ? 'progress-fill-danger' : liveHumidity < 50 ? 'progress-fill-warning' : 'progress-fill-primary'}`} style={{ width: `${liveHumidity}%`, transition: 'width 1.5s ease' }} />
-          </div>
-        </div>
-
-        <div className="card" style={{ marginBottom: 0, padding: '1.25rem' }}>
-          <div className="card-title"><Users size={14} /> Est. Profit</div>
-          <div className={`card-value ${estimatedProfit > 0 ? 'text-success' : 'text-danger'}`}>
-            ₹{estimatedProfit.toLocaleString()}
-          </div>
-          <div className="text-muted" style={{ fontSize: '0.72rem', marginTop: '0.2rem' }}>At current market ₹102/kg</div>
-        </div>
-      </div>
-
-      <div className="grid-2">
-        {/* AI Smart Insights */}
-        <div>
-          <div className="card ai-card" style={{ marginBottom: '1.25rem' }}>
-            <h3 className="card-title text-secondary"><Activity size={18} /> AI Profit Predictor</h3>
-            <p style={{ fontSize: '1.25rem', fontWeight: 700, marginTop: '0.5rem' }}>
-              Best sell day: <span className="text-secondary">Day 37</span>
-            </p>
-            <p className="text-muted" style={{ fontSize: '0.875rem', marginTop: '0.25rem' }}>
-              Expected Profit: <strong className="text-success">₹{estimatedProfit.toLocaleString()}</strong> ({stats.totalBirds.toLocaleString()} birds · FCR 1.62)
-            </p>
-            <div style={{ marginTop: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {[
-                { label: 'Growth Rate', val: '94%', pct: 94, cls: 'primary' },
-                { label: 'Feed Efficiency', val: '87%', pct: 87, cls: 'secondary' },
-                { label: 'Survival Rate', val: '98.4%', pct: 98, cls: 'success' },
-              ].map(r => (
-                <div key={r.label}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.775rem', marginBottom: '0.2rem' }}>
-                    <span className="text-muted">{r.label}</span>
-                    <span style={{ fontWeight: 600 }}>{r.val}</span>
-                  </div>
-                  <div className="progress-track">
-                    <div className={`progress-fill progress-fill-${r.cls}`} style={{ width: `${r.pct}%` }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* WhatsApp ERP */}
-          <div className="card success-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.875rem' }}>
-              <h3 className="card-title text-success" style={{ margin: 0 }}>
-                <MessageCircle size={18} /> WhatsApp ERP Sync
-              </h3>
-              <span className="badge badge-success">● Connected</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.875rem', marginBottom: '0.75rem' }}>
-              <Bot size={24} className="text-muted" />
+      ) : (
+        <>
+          <div className="card" style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
               <div>
-                <strong>Farmer Assistant Bot</strong>
-                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Multilingual (EN / HI / मर)</div>
+                <div className="text-muted" style={{ fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Batch overview</div>
+                <h3 style={{ margin: '0.2rem 0 0' }}>{selectedBatch.batchName}</h3>
+              </div>
+              <div className={`badge ${todayStatus === 'CRITICAL' ? 'badge-critical' : todayStatus === 'WATCH' ? 'badge-warning' : 'badge-success'}`}>
+                {todayStatus}
               </div>
             </div>
-            <div style={{ background: 'rgba(255,255,255,0.04)', padding: '0.75rem', borderRadius: '8px', fontSize: '0.825rem', border: '1px solid var(--border-card)' }}>
-              <span className="text-muted">Last Msg:</span>{' '}
-              "Batch A needs feed restock in 2 days."
-              <div className="text-success" style={{ fontSize: '0.7rem', marginTop: '0.25rem' }}>
-                ✓ Read by Farm Manager (10m ago)
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.8rem', marginTop: '1rem' }}>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Flock age</div>
+                <div style={{ fontWeight: 700 }}>{flockAgeDays !== null ? `${flockAgeDays} days` : 'N/A'}</div>
+              </div>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Birds placed</div>
+                <div style={{ fontWeight: 700 }}>{formatNumber(selectedBatch.initialBirds, 0)}</div>
+              </div>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Birds alive</div>
+                <div style={{ fontWeight: 700 }}>{formatNumber(performance?.birdsAlive ?? selectedBatch.aliveBirds, 0)}</div>
+              </div>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Total mortality</div>
+                <div style={{ fontWeight: 700 }}>{formatNumber(performance?.totalMortality ?? null, 0)}</div>
+              </div>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Loss rate</div>
+                <div style={{ fontWeight: 700 }}>{performance?.lossRatePct !== null && performance?.lossRatePct !== undefined ? `${performance.lossRatePct.toFixed(1)}%` : 'N/A'}</div>
+              </div>
+              <div className="card" style={{ padding: '0.85rem', marginBottom: 0 }}>
+                <div className="text-muted" style={{ fontSize: '0.72rem' }}>Avg. weight</div>
+                <div style={{ fontWeight: 700 }}>{performance?.latestAverageWeightKg !== null && performance?.latestAverageWeightKg !== undefined ? `${performance.latestAverageWeightKg.toFixed(2)} kg` : 'Average weight not available.'}</div>
               </div>
             </div>
           </div>
-        </div>
 
-        {/* Right: Weather + System */}
-        <div>
-          {weather && (
-            <div className="card primary-card" style={{ marginBottom: '1.25rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <h3 className="card-title" style={{ margin: 0 }}><CloudSun size={16} /> Current Weather</h3>
-                <span style={{ fontSize: '0.7rem', background: '#e06500', color: '#fff', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 700, letterSpacing: '0.05em' }}>ACCUWEATHER</span>
+          <div className="grid-2">
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <AlertTriangle size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>What needs attention</h3>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <div>
-                  <div style={{ fontSize: '2.8rem', fontWeight: 800, lineHeight: 1 }}>{weather.current.temp}°<span style={{ fontSize: '1.5rem', verticalAlign: 'top' }}>C</span></div>
-                  <div className="text-muted" style={{ fontSize: '0.85rem', marginTop: '0.3rem' }}>RealFeel® {weather.current.realFeel}°C · {weather.current.condition}</div>
-                  <div className="text-muted" style={{ fontSize: '0.75rem', marginTop: '0.2rem' }}>UV Index: {weather.current.uvIndex} · Wind: {weather.current.windKmh} km/h</div>
-                </div>
-                <span style={{ fontSize: '3.5rem', filter: 'drop-shadow(0 0 10px rgba(255,165,0,0.3))' }}>⛅</span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                {weather.forecast.map(f => (
-                  <div key={f.day} style={{ display: 'flex', gap: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', fontSize: '0.8rem' }}>
-                    <div style={{ width: 70, fontWeight: 600, flexShrink: 0 }}>{f.day}</div>
-                    <div style={{ width: 80, color: 'var(--text-muted)', flexShrink: 0 }}>H:{f.high}° L:{f.low}°</div>
-                    <div className="text-muted" style={{ flex: 1, fontSize: '0.72rem' }}>{f.recommendation}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.7rem' }}>
+                {decisionItems.map(item => (
+                  <div key={item.title} className="card" style={{ padding: '0.8rem', marginBottom: 0, borderLeft: item.severity === 'critical' ? '4px solid #ef4444' : item.severity === 'warning' ? '4px solid #f59e0b' : '4px solid #3b82f6' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.3rem' }}>
+                      <strong>{item.title}</strong>
+                      <span className={`badge ${item.severity === 'critical' ? 'badge-critical' : item.severity === 'warning' ? 'badge-warning' : 'badge-info'}`}>
+                        {item.severity}
+                      </span>
+                    </div>
+                    <div className="text-muted" style={{ fontSize: '0.8rem', marginBottom: '0.35rem' }}>{item.explanation}</div>
+                    <div style={{ fontSize: '0.8rem', display: 'flex', justifyContent: 'space-between', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <span><strong>Action:</strong> {item.action}</span>
+                      <span className="text-muted">Source: {item.source}</span>
+                    </div>
                   </div>
                 ))}
               </div>
             </div>
-          )}
 
-          <div className="card" style={{ padding: '1.25rem' }}>
-            <h3 className="card-title">System Status</h3>
-            {[
-              { label: 'MongoDB Backend', ok: true },
-              { label: 'IoT Sensor Stream', ok: true },
-              { label: 'YOLOv8 CV Engine', ok: true },
-              { label: 'AI Model Server', ok: true },
-              { label: 'WhatsApp API', ok: true },
-            ].map(s => (
-              <div key={s.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid var(--border-card)', fontSize: '0.825rem' }}>
-                <span>{s.label}</span>
-                <span className={s.ok ? 'text-success' : 'text-danger'} style={{ fontWeight: 600, fontSize: '0.75rem' }}>
-                  {s.ok ? '● Online' : '○ Offline'}
-                </span>
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <Activity size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>Today's flock status</h3>
               </div>
-            ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <span className={`badge ${todayStatus === 'CRITICAL' ? 'badge-critical' : todayStatus === 'WATCH' ? 'badge-warning' : 'badge-success'}`}>{todayStatus}</span>
+              </div>
+              <p className="text-muted" style={{ margin: '0.25rem 0 0.75rem' }}>{decisionItems[0]?.explanation ?? 'Flock currently appears on track.'}</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem' }}>
+                {decisionItems.slice(0, 3).map((item, index) => (
+                  <div key={`${item.title}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem' }}>
+                    <ArrowRight size={14} />
+                    <span>{item.action}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
+
+          <div className="grid-2">
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <HeartPulse size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>Health summary</h3>
+              </div>
+              {healthSummary ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.7rem' }}>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Status</div>
+                    <strong>{healthSummary.latestHealthStatus}</strong>
+                  </div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Risk level</div>
+                    <strong>{healthSummary.highestRecentRisk}</strong>
+                  </div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Total inspections</div>
+                    <strong>{healthSummary.totalInspections}</strong>
+                  </div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Low confidence</div>
+                    <strong>{healthSummary.lowConfidenceInspections}</strong>
+                  </div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Abnormal</div>
+                    <strong>{healthSummary.abnormalInspectionCount}</strong>
+                  </div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}>
+                    <div className="text-muted" style={{ fontSize: '0.72rem' }}>Trend</div>
+                    <strong>{healthSummary.recentHealthTrend}</strong>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-muted">No health inspections recorded yet.</div>
+              )}
+            </div>
+
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <TrendingUp size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>Performance summary</h3>
+              </div>
+              {performance ? (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.7rem' }}>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Birds alive</div><strong>{formatNumber(performance.birdsAlive, 0)}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Loss rate</div><strong>{performance.lossRatePct !== null ? formatPercent(performance.lossRatePct) : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Avg. weight</div><strong>{performance.latestAverageWeightKg !== null ? `${performance.latestAverageWeightKg.toFixed(2)} kg` : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Biomass</div><strong>{performance.liveBiomassKg !== null ? `${performance.liveBiomassKg.toFixed(1)} kg` : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Feed</div><strong>{performance.cumulativeFeedKg !== null ? `${performance.cumulativeFeedKg.toFixed(1)} kg` : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>ADG</div><strong>{performance.recentAdgKgPerDay !== null ? `${performance.recentAdgKgPerDay.toFixed(3)} kg/day` : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Target weight</div><strong>{performance.targetSaleWeightKg !== null ? `${performance.targetSaleWeightKg.toFixed(2)} kg` : 'N/A'}</strong></div>
+                  <div className="card" style={{ padding: '0.7rem', marginBottom: 0 }}><div className="text-muted" style={{ fontSize: '0.72rem' }}>Actual FCR</div><strong>{performance.operationalFcr !== null ? performance.operationalFcr.toFixed(2) : 'Not yet calculable'}</strong></div>
+                </div>
+              ) : (
+                <div className="text-muted">Daily flock data not recorded yet.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid-2">
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <Weight size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>Average weight trend</h3>
+              </div>
+              {weightTrend.length ? (
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '140px', borderRadius: '10px', background: 'rgba(148,163,184,0.04)' }}>
+                  <path d={weightChartPath} stroke="#3b82f6" strokeWidth="2.4" fill="none" />
+                </svg>
+              ) : (
+                <div className="text-muted">Daily flock data not recorded yet.</div>
+              )}
+            </div>
+
+            <div className="card" style={{ padding: '1rem 1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                <ShieldAlert size={16} />
+                <h3 className="card-title" style={{ margin: 0 }}>Mortality + culls trend</h3>
+              </div>
+              {mortalityTrend.length ? (
+                <svg viewBox="0 0 100 100" preserveAspectRatio="none" style={{ width: '100%', height: '140px', borderRadius: '10px', background: 'rgba(148,163,184,0.04)' }}>
+                  <path d={mortalityChartPath} stroke="#ef4444" strokeWidth="2.4" fill="none" />
+                </svg>
+              ) : (
+                <div className="text-muted">Daily flock data not recorded yet.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="card" style={{ padding: '1rem 1.25rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem' }}>
+              <CheckCircle2 size={16} />
+              <h3 className="card-title" style={{ margin: 0 }}>Quick actions</h3>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+              <button className="btn btn-primary" onClick={() => onNavigate?.('batch')}>Record today’s flock data</button>
+              <button className="btn btn-outline" onClick={() => onNavigate?.('health')}>View health history</button>
+              <button className="btn btn-outline" onClick={() => onNavigate?.('batch')}>View batch performance</button>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
