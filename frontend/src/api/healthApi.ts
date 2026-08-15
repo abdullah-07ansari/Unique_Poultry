@@ -1,4 +1,4 @@
-import type { HealthInspection } from '../types/api';
+import type { BatchHealthSummary, HealthAssessment, HealthInspection } from '../types/api';
 import { ApiError } from '../types/api';
 
 const BASE = 'http://localhost:5000/api';
@@ -47,4 +47,14 @@ export async function analyzeHealthInspection(inspectionId: string): Promise<Hea
     method: 'POST'
   });
   return handleResponse<{ success: boolean; inspection: HealthInspection }>(res).then(r => r.inspection);
+}
+
+export async function fetchBatchHealthSummary(batchId: string): Promise<BatchHealthSummary> {
+  const res = await fetch(`${BASE}/batches/${batchId}/health-summary`);
+  return handleResponse<{ success: boolean; summary: BatchHealthSummary }>(res).then(r => r.summary);
+}
+
+export async function fetchHealthInspectionAssessment(inspectionId: string): Promise<HealthAssessment> {
+  const res = await fetch(`${BASE}/health-inspections/${inspectionId}/assessment`);
+  return handleResponse<{ success: boolean; assessment: HealthAssessment }>(res).then(r => r.assessment);
 }

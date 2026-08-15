@@ -15,9 +15,11 @@ import { fetchBatches, friendlyError } from '../api/flockApi';
 import {
   analyzeHealthInspection,
   createHealthInspection,
+  fetchBatchHealthSummary,
+  fetchHealthInspectionAssessment,
   fetchHealthInspections
 } from '../api/healthApi';
-import type { Batch, HealthInspection } from '../types/api';
+import type { Batch, BatchHealthSummary, HealthAssessment, HealthInspection } from '../types/api';
 
 const todayIso = () => new Date().toISOString().split('T')[0];
 
@@ -33,6 +35,8 @@ export default function HealthScreen() {
   const [selectedBatchId, setSelectedBatchId] = useState('');
   const [inspections, setInspections] = useState<HealthInspection[]>([]);
   const [selectedInspectionId, setSelectedInspectionId] = useState('');
+  const [batchHealthSummary, setBatchHealthSummary] = useState<BatchHealthSummary | null>(null);
+  const [selectedAssessment, setSelectedAssessment] = useState<HealthAssessment | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
@@ -67,13 +71,18 @@ export default function HealthScreen() {
     if (!selectedBatchId) {
       setInspections([]);
       setSelectedInspectionId('');
+      setBatchHealthSummary(null);
       return;
     }
 
     async function loadInspections() {
       try {
-        const data = await fetchHealthInspections(selectedBatchId);
+        const [data, summary] = await Promise.all([
+          fetchHealthInspections(selectedBatchId),
+          fetchBatchHealthSummary(selectedBatchId)
+        ]);
         setInspections(data);
+        setBatchHealthSummary(summary);
         setSelectedInspectionId(current => {
           if (current && data.some(item => item._id === current)) {
             return current;
@@ -87,6 +96,24 @@ export default function HealthScreen() {
 
     void loadInspections();
   }, [selectedBatchId]);
+
+  useEffect(() => {
+    if (!selectedInspectionId) {
+      setSelectedAssessment(null);
+      return;
+    }
+
+    async function loadAssessment() {
+      try {
+        const data = await fetchHealthInspectionAssessment(selectedInspectionId);
+        setSelectedAssessment(data);
+      } catch (err) {
+        setError(friendlyError(err));
+      }
+    }
+
+    void loadAssessment();
+  }, [selectedInspectionId]);
 
   const selectedInspection = inspections.find(item => item._id === selectedInspectionId) ?? null;
 
@@ -177,6 +204,22 @@ export default function HealthScreen() {
           {loading ? 'Loading...' : (selectedBatch ? selectedBatch.batchName : 'No batch selected')}
         </div>
       </div>
+
+      {selectedBatch && batchHealthSummary && (
+        <div className="card" style={{ padding: '1rem 1.25rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            <Activity size={16} />
+            <h3 className="card-title" style={{ margin: 0 }}>Batch health summary</h3>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '0.75rem' }}>
+            <div className="badge badge-info">Total inspections: {batchHealthSummary.totalInspections}</div>
+            <div className="badge badge-info">Successful AI: {batchHealthSummary.successfulAnalyses}</div>
+            <div className="badge badge-info">Low confidence: {batchHealthSummary.lowConfidenceInspections}</div>
+            <div className="badge badge-info">Latest status: {batchHealthSummary.latestHealthStatus}</div>
+            <div className="badge badge-info">Highest risk: {batchHealthSummary.highestRecentRisk}</div>
+          </div>
+        </div>
+      )}
 
       <div className="grid-2">
         <div className="card" style={{ padding: '1rem 1.25rem' }}>
@@ -319,6 +362,17 @@ export default function HealthScreen() {
               {analyzing ? 'Analyzing...' : 'Run analysis'}
             </button>
           </div>
+
+          {selectedAssessment && (
+            <div className="warning-card" style={{ padding: '0.9rem 1rem', marginBottom: '0.9rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.4rem' }}>
+                <ShieldAlert size={16} />
+                <strong>Health assessment</strong>
+              </div>
+              <div>Risk: {selectedAssessment.riskLevel} ({selectedAssessment.riskScore})</div>
+              <div className="text-muted">{selectedAssessment.explanation}</div>
+            </div>
+          )}
 
           {!analysisResult || selectedInspection.aiModelStatus === 'NOT_RUN' ? (
             <div className="warning-card" style={{ padding: '0.9rem 1rem' }}>

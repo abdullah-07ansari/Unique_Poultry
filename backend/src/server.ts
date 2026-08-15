@@ -19,9 +19,11 @@ import DailyFlockRecord from './models/DailyFlockRecord';
 import shedRoutes from './routes/shedRoutes';
 import dailyRecordRoutes from './routes/dailyRecordRoutes';
 import healthInspectionRoutes from './routes/healthInspectionRoutes';
+import healthAssessmentRoutes from './routes/healthAssessmentRoutes';
 import { recalculateAliveBirds } from './services/batchService';
 import { calculateFlockPerformance } from './services/performanceService';
 import { getHealthInspectionById, analyzeHealthInspection } from './controllers/healthInspectionController';
+import { getBatchHealthSummary, getHealthInspectionAssessment } from './controllers/healthAssessmentController';
 
 const app = express();
 app.use(cors());
@@ -32,8 +34,11 @@ app.use('/api/sheds', shedRoutes);
 // Daily records are nested: /api/batches/:batchId/daily-records
 app.use('/api/batches/:batchId/daily-records', dailyRecordRoutes);
 app.use('/api/batches/:batchId/health-inspections', healthInspectionRoutes);
+app.use('/api', healthAssessmentRoutes);
 app.get('/api/health-inspections/:inspectionId', getHealthInspectionById);
 app.post('/api/health-inspections/:inspectionId/analyze', analyzeHealthInspection);
+app.get('/api/batches/:batchId/health-summary', getBatchHealthSummary);
+app.get('/api/health-inspections/:inspectionId/assessment', getHealthInspectionAssessment);
 
 // -----------------------------------------
 // DATABASE CONNECTION (Stateless Mongoose)

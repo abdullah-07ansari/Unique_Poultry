@@ -178,6 +178,54 @@ export interface HealthInspection {
   updatedAt: string;
 }
 
+export type HealthAssessmentStatus =
+  | 'INSUFFICIENT_DATA'
+  | 'MODEL_NOT_TRAINED'
+  | 'LOW_CONFIDENCE'
+  | 'WATCH'
+  | 'ALERT'
+  | 'CRITICAL';
+
+export type HealthRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'INSUFFICIENT_DATA';
+export type HealthSeverity = 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL' | 'INSUFFICIENT_DATA';
+export type ConfidenceState = 'HIGH' | 'MEDIUM' | 'LOW' | 'INSUFFICIENT_DATA';
+
+export interface HealthConditionDefinition {
+  code: string;
+  displayName: string;
+  description: string;
+  severity: 'LOW' | 'MODERATE' | 'HIGH' | 'CRITICAL';
+  recommendedAction: string;
+  requiresVeterinaryAttention: boolean;
+}
+
+export interface HealthAssessment {
+  healthStatus: HealthAssessmentStatus;
+  riskLevel: HealthRiskLevel;
+  riskScore: number;
+  severity: HealthSeverity;
+  possibleConditions: string[];
+  explanation: string;
+  recommendedActions: string[];
+  requiresClearerImage: boolean;
+  veterinaryAttentionRecommended: boolean;
+  confidenceState: ConfidenceState;
+  conditionDetails: HealthConditionDefinition[];
+}
+
+export interface BatchHealthSummary {
+  batchId: string;
+  batchName: string;
+  totalInspections: number;
+  successfulAnalyses: number;
+  lowConfidenceInspections: number;
+  abnormalInspectionCount: number;
+  latestHealthStatus: HealthAssessmentStatus;
+  highestRecentRisk: HealthRiskLevel;
+  recurringConditions: string[];
+  recentHealthTrend: 'stable' | 'improving' | 'worsening' | 'insufficient_data';
+}
+
 /** API error with status code for targeted error handling */
 export class ApiError extends Error {
   status: number;
