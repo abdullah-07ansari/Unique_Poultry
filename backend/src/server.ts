@@ -18,8 +18,10 @@ import DailyFlockRecord from './models/DailyFlockRecord';
 
 import shedRoutes from './routes/shedRoutes';
 import dailyRecordRoutes from './routes/dailyRecordRoutes';
+import healthInspectionRoutes from './routes/healthInspectionRoutes';
 import { recalculateAliveBirds } from './services/batchService';
 import { calculateFlockPerformance } from './services/performanceService';
+import { getHealthInspectionById, analyzeHealthInspection } from './controllers/healthInspectionController';
 
 const app = express();
 app.use(cors());
@@ -29,6 +31,9 @@ app.use(express.json());
 app.use('/api/sheds', shedRoutes);
 // Daily records are nested: /api/batches/:batchId/daily-records
 app.use('/api/batches/:batchId/daily-records', dailyRecordRoutes);
+app.use('/api/batches/:batchId/health-inspections', healthInspectionRoutes);
+app.get('/api/health-inspections/:inspectionId', getHealthInspectionById);
+app.post('/api/health-inspections/:inspectionId/analyze', analyzeHealthInspection);
 
 // -----------------------------------------
 // DATABASE CONNECTION (Stateless Mongoose)

@@ -139,6 +139,45 @@ export interface NewBatchFormData {
   targetSaleAgeDays: string;
 }
 
+export type HealthInspectionStatus = 'pending' | 'completed' | 'needs_review' | 'error';
+export type HealthInspectionModelStatus = 'NOT_RUN' | 'MODEL_NOT_TRAINED' | 'SUCCESS' | 'LOW_CONFIDENCE' | 'ERROR';
+
+export interface HealthInspectionDetectionBBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface HealthInspectionDetection {
+  className: string;
+  confidence: number;
+  bbox: HealthInspectionDetectionBBox;
+}
+
+export interface HealthInspectionResult {
+  status: HealthInspectionModelStatus;
+  confidence: number | null;
+  detections: HealthInspectionDetection[];
+  message: string | null;
+}
+
+export interface HealthInspection {
+  _id: string;
+  batchId: string;
+  inspectionDate: string;
+  flockDay: number;
+  imageReference: string;
+  inspectionStatus: HealthInspectionStatus;
+  aiModelStatus: HealthInspectionModelStatus;
+  confidence: number | null;
+  detectedConditions: string[];
+  notes?: string;
+  result?: HealthInspectionResult;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** API error with status code for targeted error handling */
 export class ApiError extends Error {
   status: number;
