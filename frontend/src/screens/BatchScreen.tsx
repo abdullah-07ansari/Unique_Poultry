@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   Plus, ChevronLeft, ClipboardList, Pencil, Trash2,
   CheckCircle, AlertCircle, Info, Calendar, Bird, Leaf,
-  Droplets, Thermometer, Wind, Scale, FlaskConical
+  Droplets, Thermometer, Scale
 } from 'lucide-react';
 
 import type { Batch, Farm, Shed, DailyFlockRecord, BatchPerformance, DailyRecordFormData, NewBatchFormData } from '../types/api';
@@ -24,11 +24,6 @@ function calcFlockDay(placementDate: string, selectedDate: string): number {
   const p = new Date(placementDate).getTime();
   const s = new Date(selectedDate).getTime();
   return Math.floor((s - p) / 86_400_000) + 1;
-}
-
-function flockAgeLabel(placementDate: string): string {
-  const days = calcFlockDay(placementDate, today());
-  return `Day ${days}`;
 }
 
 function fmtDate(iso: string): string {
@@ -119,8 +114,7 @@ interface FormErrors {
 function validateRecord(
   data: DailyRecordFormData,
   placementDate: string,
-  aliveBirds: number,
-  isEdit: boolean
+  aliveBirds: number
 ): FormErrors {
   const errs: FormErrors = {};
 
@@ -238,7 +232,7 @@ function RecordForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const errs = validateRecord(form, batch.placementDate, batch.aliveBirds, !!editRecord);
+    const errs = validateRecord(form, batch.placementDate, batch.aliveBirds);
     if (Object.keys(errs).length > 0) {
       setErrors(errs);
       return;

@@ -3,7 +3,7 @@
 // Thin fetch wrappers. No business logic. No fake data.
 // ============================================================
 
-import type { Batch, Farm, Shed, DailyFlockRecord, BatchPerformance, ApiError as ApiErrorType } from '../types/api';
+import type { Batch, Farm, Shed, DailyFlockRecord, BatchPerformance } from '../types/api';
 import { ApiError } from '../types/api';
 
 const BASE = 'http://localhost:5000/api';
