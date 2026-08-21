@@ -1,4 +1,4 @@
-# 🐔 PoultrySense AI
+# 🐔 Unique Poultry AI
 
 > An intelligent poultry farm management platform for flock monitoring, performance analysis, health inspection, nutrition tracking, and farm-level decision support.
 
